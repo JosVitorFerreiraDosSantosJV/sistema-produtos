@@ -1,0 +1,39 @@
+const express = require("express");
+const cors = require("cors");
+
+const app = express();
+
+const PORT = 3000;
+
+app.use(cors());
+app.use(express.json());
+
+let produtos = [];
+
+app.get("/", (req, res) => {
+    res.send("API funcionando!");
+});
+
+app.get("/produtos", (req, res) => {
+    res.json(produtos);
+});
+
+app.post("/produtos", (req, res) => {
+
+    const { nome, preco, quantidade } = req.body;
+
+    const produto = {
+        id: produtos.length + 1,
+        nome: nome,
+        preco: preco,
+        quantidade: quantidade
+    };
+
+    produtos.push(produto);
+
+    res.status(201).json(produto);
+});
+
+app.listen(PORT, () => {
+    console.log(`API rodando na porta ${PORT}`);
+});

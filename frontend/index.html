@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+    <title>Sistema de Produtos</title>
+
+    <link rel="stylesheet" href="style.css">
+</head>
+
+<body>
+
+    <h1>Sistema de Produtos</h1>
+
+    <section>
+
+        <h2>Cadastrar produto</h2>
+
+        <form>
+
+            <label>
+                Nome:
+                <input type="text" id="nome">
+            </label>
+
+            <br><br>
+
+            <label>
+                Preço:
+                <input type="number" id="preco">
+            </label>
+
+            <br><br>
+
+            <label>
+                Quantidade:
+                <input type="number" id="quantidade">
+            </label>
+
+            <br><br>
+
+            <button type="submit">
+                Cadastrar
+            </button>
+
+        </form>
+
+    </section>
+
+    <hr>
+
+    <section>
+
+        <h2>Produtos cadastrados</h2>
+
+        <table border="1">
+
+            <thead>
+
+                <tr>
+                    <th>ID</th>
+                    <th>Nome</th>
+                    <th>Preço</th>
+                    <th>Quantidade</th>
+                    <th>Ações</th>
+                </tr>
+
+            </thead>
+
+            <tbody id="lista-produtos">
+
+            </tbody>
+
+        </table>
+
+    </section>
+
+    <script src="script.js"></script>
+
+</body>
+
+</html>
