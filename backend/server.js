@@ -1,49 +1,62 @@
 require("dotenv").config();
-
 const express = require("express");
-const cors = require("cors");
 const mysql = require("mysql2");
+const cors = require("cors");
 
 const app = express();
-
 const PORT = process.env.PORT || 3000;
 
-// Middlewares
 app.use(cors());
 app.use(express.json());
 
-// Conexão com o MySQL
-const db = mysql.createConnection({
-    host: process.env.DB_HOST,
+const dbConfig = {
+    host: process.env.DB_HOST || "db",
     user: process.env.DB_USER,
     password: process.env.DB_PASSWORD,
     database: process.env.DB_NAME,
-    port: process.env.DB_PORT
-});
+    port: Number(process.env.DB_PORT) || 3306
+};
 
-// Testar conexão com o banco
-db.connect((err) => {
-    if (err) {
-        console.error("Erro ao conectar ao MySQL:", err);
-        return;
-    }
+let db;
 
-    console.log("Conectado ao MySQL!");
-});
+function conectarComRetry() {
+    db = mysql.createConnection(dbConfig);
 
-// Rota inicial
+    db.connect((err) => {
+        if (err) {
+            console.error(
+                "Erro ao conectar ao MySQL (tentando novamente em 3 segundos):",
+                err.message
+            );
+
+            setTimeout(conectarComRetry, 3000);
+            return;
+        }
+
+        console.log("Conectado ao MySQL com sucesso!");
+    });
+
+    db.on("error", (err) => {
+        console.error("Erro no banco de dados:", err.message);
+
+        if (err.code === "PROTOCOL_CONNECTION_LOST") {
+            conectarComRetry();
+        }
+    });
+}
+
+conectarComRetry();
+
 app.get("/", (req, res) => {
-    res.send("API funcionando!");
+    res.json({ mensagem: "API de Produtos funcionando!" });
 });
 
-// Listar produtos
 app.get("/produtos", (req, res) => {
     const sql = "SELECT * FROM produtos";
 
     db.query(sql, (err, resultados) => {
         if (err) {
             console.error("Erro ao buscar produtos:", err);
-
             return res.status(500).json({
                 erro: "Erro ao buscar produtos"
             });
@@ -53,9 +66,36 @@ app.get("/produtos", (req, res) => {
     });
 });
 
-// Cadastrar produto
+app.get("/produtos/:id", (req, res) => {
+    const { id } = req.params;
+    const sql = "SELECT * FROM produtos WHERE id = ?";
+
+    db.query(sql, [id], (err, resultados) => {
+        if (err) {
+            console.error("Erro ao buscar produto:", err);
+            return res.status(500).json({
+                erro: "Erro ao buscar produto"
+            });
+        }
+
+        if (resultados.length === 0) {
+            return res.status(404).json({
+                erro: "Produto não encontrado"
+            });
+        }
+
+        res.json(resultados[0]);
+    });
+});
+
 app.post("/produtos", (req, res) => {
     const { nome, preco, quantidade } = req.body;
+
+    if (!nome || preco === undefined || quantidade === undefined) {
+        return res.status(400).json({
+            erro: "Todos os campos são obrigatórios"
+        });
+    }
 
     const sql = `
         INSERT INTO produtos (nome, preco, quantidade)
@@ -67,26 +107,22 @@ app.post("/produtos", (req, res) => {
         [nome, preco, quantidade],
         (err, resultado) => {
             if (err) {
-                console.error("Erro ao cadastrar produto:", err);
-
+                console.error("Erro ao criar produto:", err);
                 return res.status(500).json({
-                    erro: "Erro ao cadastrar produto"
+                    erro: "Erro ao criar produto"
                 });
             }
 
-            const produto = {
+            res.status(201).json({
                 id: resultado.insertId,
-                nome: nome,
-                preco: preco,
-                quantidade: quantidade
-            };
-
-            res.status(201).json(produto);
+                nome,
+                preco,
+                quantidade
+            });
         }
     );
 });
 
-// Editar produto
 app.put("/produtos/:id", (req, res) => {
     const { id } = req.params;
     const { nome, preco, quantidade } = req.body;
@@ -103,7 +139,6 @@ app.put("/produtos/:id", (req, res) => {
         (err, resultado) => {
             if (err) {
                 console.error("Erro ao editar produto:", err);
-
                 return res.status(500).json({
                     erro: "Erro ao editar produto"
                 });
@@ -125,16 +160,13 @@ app.put("/produtos/:id", (req, res) => {
     );
 });
 
-// Excluir produto
 app.delete("/produtos/:id", (req, res) => {
     const { id } = req.params;
-
     const sql = "DELETE FROM produtos WHERE id = ?";
 
     db.query(sql, [id], (err, resultado) => {
         if (err) {
             console.error("Erro ao excluir produto:", err);
-
             return res.status(500).json({
                 erro: "Erro ao excluir produto"
             });
@@ -152,7 +184,6 @@ app.delete("/produtos/:id", (req, res) => {
     });
 });
 
-// Iniciar servidor
 app.listen(PORT, () => {
-    console.log(`API rodando na porta ${PORT}`);
+    console.log(`rodando na porta ${PORT}`);
 });

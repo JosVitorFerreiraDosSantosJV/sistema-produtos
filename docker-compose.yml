@@ -1,0 +1,58 @@
+services:
+  db:
+    image: mysql:8.0
+    container_name: sistema_mysql
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      MYSQL_DATABASE: ${MYSQL_DATABASE}
+      MYSQL_USER: ${MYSQL_USER}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD}
+    ports:
+      - "3307:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+    networks:
+      - sistema-network
+
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-p${MYSQL_ROOT_PASSWORD}"] # Verifica se o MySQL está respondendo
+      interval: 10s # Executa a verificação a cada 10 segundos
+      timeout: 5s # Aguarda no máximo 5 segundos por uma resposta
+      retries: 5 # Permite até 5 falhas antes de marcar como unhealthy
+      start_period: 30s # Dá 30 segundos iniciais para o MySQL terminar de iniciar
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: sistema_backend
+    ports:
+      - "3000:3000"
+    environment:
+      DB_HOST: db
+      DB_USER: ${MYSQL_USER}
+      DB_PASSWORD: ${MYSQL_PASSWORD}
+      DB_NAME: ${MYSQL_DATABASE}
+      DB_PORT: 3306
+    networks:
+      - sistema-network
+    depends_on:
+      db:
+        condition: service_healthy # Inicia o backend somente quando o MySQL estiver saudável
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: sistema_frontend
+    ports:
+      - "8080:80"
+    networks:
+      - sistema-network
+
+networks:
+  sistema-network:
+    driver: bridge
+
+volumes:
+  mysql_data:
