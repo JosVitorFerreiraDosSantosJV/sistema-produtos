@@ -1,15 +1,14 @@
-FROM node:20-alpine
+FROM node:18-alpine
 
 WORKDIR /app
 
 COPY package*.json ./
-
-RUN npm install
-
-ENV NODE_PATH=/app/node_modules
+RUN npm install --omit=dev
 
 COPY . .
 
-EXPOSE 3000
+COPY entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
 
-CMD ["npm", "start"]
+ENTRYPOINT ["/entrypoint.sh"]
+CMD ["4000", "production"]

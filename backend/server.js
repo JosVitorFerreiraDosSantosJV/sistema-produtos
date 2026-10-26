@@ -1,189 +1,225 @@
-require("dotenv").config();
-const express = require("express");
-const mysql = require("mysql2");
-const cors = require("cors");
+const express = require('express');
+const cors = require('cors');
+const mysql = require('mysql2/promise');
 
 const app = express();
-const PORT = process.env.PORT || 3000;
 
-app.use(cors());
+// Resolução dinâmica de porta e ambiente
+const PORT = Number(process.env.PORT || process.argv[2] || 4000);
+const NODE_ENV = process.env.NODE_ENV || process.argv[3] || 'production';
+
+// Middlewares
+app.use(cors({
+  origin: '*',
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization']
+}));
+
 app.use(express.json());
 
+// Configuração do MySQL
 const dbConfig = {
-    host: process.env.DB_HOST || "db",
-    user: process.env.DB_USER,
-    password: process.env.DB_PASSWORD,
-    database: process.env.DB_NAME,
-    port: Number(process.env.DB_PORT) || 3306
+  host: process.env.DB_HOST || 'db',
+  user: process.env.DB_USER,
+  password: process.env.DB_PASSWORD,
+  database: process.env.DB_NAME,
+  port: Number(process.env.DB_PORT) || 3306,
+  waitForConnections: true,
+  connectionLimit: 10,
+  queueLimit: 0
 };
 
-let db;
+let pool;
 
-function conectarComRetry() {
-    db = mysql.createConnection(dbConfig);
+// Criação e sincronização da tabela produtos
+async function inicializarTabelas() {
+  const sql = `
+    CREATE TABLE IF NOT EXISTS produtos (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      nome VARCHAR(255) NOT NULL,
+      preco DECIMAL(10, 2) NOT NULL,
+      quantidade INT DEFAULT 0,
+      criado_em TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+  `;
 
-    db.connect((err) => {
-        if (err) {
-            console.error(
-                "Erro ao conectar ao MySQL (tentando novamente em 3 segundos):",
-                err.message
-            );
+  try {
+    await pool.query(sql);
 
-            setTimeout(conectarComRetry, 3000);
-            return;
-        }
+    // Adiciona quantidade caso a tabela antiga não tenha essa coluna
+    await pool.query(`
+      ALTER TABLE produtos
+      ADD COLUMN IF NOT EXISTS quantidade INT DEFAULT 0;
+    `).catch(() => {});
 
-        console.log("Conectado ao MySQL com sucesso!");
-    });
-
-    db.on("error", (err) => {
-        console.error("Erro no banco de dados:", err.message);
-
-        if (err.code === "PROTOCOL_CONNECTION_LOST") {
-            conectarComRetry();
-        }
-    });
+    console.log('✅ Banco validado: Tabela "produtos" pronta para uso!');
+  } catch (err) {
+    console.error(
+      '❌ Falha ao verificar/criar tabela "produtos":',
+      err.message
+    );
+  }
 }
 
-conectarComRetry();
+// Conexão com retentativas automáticas
+async function conectarBanco(retentativas = 10, atraso = 3000) {
+  for (let i = 1; i <= retentativas; i++) {
+    try {
+      pool = mysql.createPool(dbConfig);
 
-app.get("/", (req, res) => {
-    res.json({ mensagem: "API de Produtos funcionando!" });
+      const connection = await pool.getConnection();
+      connection.release();
+
+      console.log('✅ Conectado ao MySQL com sucesso!');
+
+      await inicializarTabelas();
+      return;
+    } catch (err) {
+      if (pool) {
+        await pool.end().catch(() => {});
+        pool = null;
+      }
+
+      console.log(
+        `Tentando conectar ao MySQL (${i}/${retentativas}): ${err.message}`
+      );
+
+      if (i < retentativas) {
+        await new Promise(resolve => setTimeout(resolve, atraso));
+      } else {
+        console.error(
+          '❌ Falha crítica: não foi possível conectar ao banco de dados.'
+        );
+      }
+    }
+  }
+}
+
+// Rota de status
+app.get('/', (req, res) => {
+  res.json({
+    status: 'online',
+    port: PORT,
+    mode: NODE_ENV
+  });
 });
 
-app.get("/produtos", (req, res) => {
-    const sql = "SELECT * FROM produtos";
-
-    db.query(sql, (err, resultados) => {
-        if (err) {
-            console.error("Erro ao buscar produtos:", err);
-            return res.status(500).json({
-                erro: "Erro ao buscar produtos"
-            });
-        }
-
-        res.json(resultados);
-    });
-});
-
-app.get("/produtos/:id", (req, res) => {
-    const { id } = req.params;
-    const sql = "SELECT * FROM produtos WHERE id = ?";
-
-    db.query(sql, [id], (err, resultados) => {
-        if (err) {
-            console.error("Erro ao buscar produto:", err);
-            return res.status(500).json({
-                erro: "Erro ao buscar produto"
-            });
-        }
-
-        if (resultados.length === 0) {
-            return res.status(404).json({
-                erro: "Produto não encontrado"
-            });
-        }
-
-        res.json(resultados[0]);
-    });
-});
-
-app.post("/produtos", (req, res) => {
-    const { nome, preco, quantidade } = req.body;
-
-    if (!nome || preco === undefined || quantidade === undefined) {
-        return res.status(400).json({
-            erro: "Todos os campos são obrigatórios"
-        });
+// Listar produtos
+app.get('/api/produtos', async (req, res) => {
+  try {
+    if (!pool) {
+      throw new Error('Conexão com o banco de dados indisponível');
     }
 
-    const sql = `
-        INSERT INTO produtos (nome, preco, quantidade)
-        VALUES (?, ?, ?)
-    `;
-
-    db.query(
-        sql,
-        [nome, preco, quantidade],
-        (err, resultado) => {
-            if (err) {
-                console.error("Erro ao criar produto:", err);
-                return res.status(500).json({
-                    erro: "Erro ao criar produto"
-                });
-            }
-
-            res.status(201).json({
-                id: resultado.insertId,
-                nome,
-                preco,
-                quantidade
-            });
-        }
+    const [rows] = await pool.query(
+      'SELECT * FROM produtos ORDER BY id DESC'
     );
+
+    res.json(rows);
+  } catch (error) {
+    console.error('Erro na listagem:', error.message);
+    res.status(500).json({ error: error.message });
+  }
 });
 
-app.put("/produtos/:id", (req, res) => {
-    const { id } = req.params;
-    const { nome, preco, quantidade } = req.body;
+// Cadastrar produto
+app.post('/api/produtos', async (req, res) => {
+  const { nome, preco, quantidade } = req.body;
 
-    const sql = `
-        UPDATE produtos
-        SET nome = ?, preco = ?, quantidade = ?
-        WHERE id = ?
-    `;
-
-    db.query(
-        sql,
-        [nome, preco, quantidade, id],
-        (err, resultado) => {
-            if (err) {
-                console.error("Erro ao editar produto:", err);
-                return res.status(500).json({
-                    erro: "Erro ao editar produto"
-                });
-            }
-
-            if (resultado.affectedRows === 0) {
-                return res.status(404).json({
-                    erro: "Produto não encontrado"
-                });
-            }
-
-            res.json({
-                id: Number(id),
-                nome,
-                preco,
-                quantidade
-            });
-        }
-    );
-});
-
-app.delete("/produtos/:id", (req, res) => {
-    const { id } = req.params;
-    const sql = "DELETE FROM produtos WHERE id = ?";
-
-    db.query(sql, [id], (err, resultado) => {
-        if (err) {
-            console.error("Erro ao excluir produto:", err);
-            return res.status(500).json({
-                erro: "Erro ao excluir produto"
-            });
-        }
-
-        if (resultado.affectedRows === 0) {
-            return res.status(404).json({
-                erro: "Produto não encontrado"
-            });
-        }
-
-        res.json({
-            mensagem: "Produto excluído com sucesso"
-        });
+  if (!nome || preco === undefined) {
+    return res.status(400).json({
+      error: 'Nome e preço são obrigatórios.'
     });
+  }
+
+  try {
+    if (!pool) {
+      throw new Error('Conexão com o banco de dados indisponível');
+    }
+
+    const qtd = Number(quantidade) || 0;
+
+    const [result] = await pool.query(
+      'INSERT INTO produtos (nome, preco, quantidade) VALUES (?, ?, ?)',
+      [nome, preco, qtd]
+    );
+
+    res.status(201).json({
+      id: result.insertId,
+      nome,
+      preco,
+      quantidade: qtd
+    });
+  } catch (error) {
+    console.error('Erro ao inserir produto:', error.message);
+    res.status(500).json({ error: error.message });
+  }
 });
 
-app.listen(PORT, () => {
-    console.log(`rodando na porta ${PORT}`);
+// Atualizar produto
+app.put('/api/produtos/:id', async (req, res) => {
+  const { id } = req.params;
+  const { nome, preco, quantidade } = req.body;
+
+  try {
+    if (!pool) {
+      throw new Error('Conexão com o banco de dados indisponível');
+    }
+
+    const qtd = Number(quantidade) || 0;
+
+    const [result] = await pool.query(
+      'UPDATE produtos SET nome = ?, preco = ?, quantidade = ? WHERE id = ?',
+      [nome, preco, qtd, id]
+    );
+
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ error: 'Produto não encontrado.' });
+    }
+
+    res.json({
+      id: Number(id),
+      nome,
+      preco,
+      quantidade: qtd
+    });
+  } catch (error) {
+    console.error('Erro ao atualizar produto:', error.message);
+    res.status(500).json({ error: error.message });
+  }
 });
+
+// Excluir produto
+app.delete('/api/produtos/:id', async (req, res) => {
+  const { id } = req.params;
+
+  try {
+    if (!pool) {
+      throw new Error('Conexão com o banco de dados indisponível');
+    }
+
+    const [result] = await pool.query(
+      'DELETE FROM produtos WHERE id = ?',
+      [id]
+    );
+
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ error: 'Produto não encontrado.' });
+    }
+
+    res.json({ message: 'Produto excluído com sucesso!' });
+  } catch (error) {
+    console.error('Erro ao excluir produto:', error.message);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Inicialização do servidor
+app.listen(PORT, '0.0.0.0', async () => {
+  console.log(
+    `🚀 Servidor rodando na porta ${PORT} [Modo: ${NODE_ENV.toUpperCase()}]`
+  );
+
+  await conectarBanco();
+});
+
